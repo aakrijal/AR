@@ -1,6 +1,4 @@
 
-cd "/Users/aakritirijal/Desktop/THESIS_ANALYSIS/FINAL"
-
 import delimited "Survey_Data_Raw.csv", clear 
 
 *Rename the variables
@@ -350,14 +348,6 @@ foreach var of varlist AOD_Localtrust-AOD_Urbantrust {
 	destring `var', replace
 }
 
-
-
-
-
-
-
-
-
 *----------------------CONTROLS---------------------------------------------
 
 *Zip code demographics
@@ -528,7 +518,6 @@ replace UB_Income=149999 if Annual_HHincome=="$100,000 - $149,999"
 replace UB_Income=500000 if Annual_HHincome=="$150,000 or over"
 
 
-
 /*
 
 *Identify whether or not they classify as wealthy.
@@ -546,14 +535,11 @@ replace Wealthy = 3 if A_Income > LB_Income               // wealthy
 
 
 
-
-
 *  WEALTH CLASSIFICATION												
 
 bysort zip_code: egen Aincome=mean(A_Income)
 
 replace A_Income= Aincome if missing(A_Income)
-
 
 *Identify whether or not they classify as wealthy.
 
@@ -568,7 +554,6 @@ replace Wealthy = 3 if A_Income > median_hh_income           // wealthy
 *===============================================================
 
 
-
 gen M_Income= A_Income/12				
 
 
@@ -580,9 +565,6 @@ replace SNAP_Income = 1696 if HHsize == 1
 
 replace SNAP_Income = 1696 + 596*(HHsize - 1) if HHsize >= 2
 
-
-*check if the individual qualify for the SNAP ** if upper bound of monthly income is lesss than the snap income, they are qualified for the snap
-
 gen SNAP_Eligible = .
 
 
@@ -590,26 +572,13 @@ gen SNAP_Eligible = .
 
 replace SNAP_Eligible = 1 if M_Income < SNAP_Income
 
-
 * Clearly NOT eligible: lower bound of income >= threshold
 replace SNAP_Eligible = 0 if M_Income > SNAP_Income
 
 
 * Ambiguous:
 
-
 replace SNAP_Eligible = . if M_Income == SNAP_Income
-
-
-tab SNAP_Eligible
-		 
-
-tab SNAP_Eligible SNAP_Enrolled, missing
-
-		 
-
-tab SNAP_Eligible Wealthy, missing
-
 
 
 
@@ -650,7 +619,6 @@ Inconvenience  Barriers: FM_Unavailability  FM_NotasGS
 */
 
 
-
  
 *  Price Barriers
 
@@ -680,9 +648,6 @@ replace RelTravel_Scaled = RelTravel_Scaled * 100
 
 
 
-
-
-
 * Quality Barriers  
 
 foreach var in TOF_Bestproduce TOF_Freshclean TOF_Grownbetter TOF_Longlasting TOF_Tastebetter {
@@ -701,9 +666,6 @@ swindex  TOF_Bestproduce TOF_Freshclean TOF_Grownbetter  TOF_Longlasting TOF_Tas
 matrix list r(wt)
 
 
-
-
- 
  /*
 *===============================================================================
 
@@ -733,14 +695,10 @@ gen HighIncomeHH_flip = HighIncomeHH_Likelihood
 
 replace HighIncomeHH_flip = 100 - HighIncomeHH_Likelihood if Wealthy==3
  
-
- 
 gen LowIncomeHH_flip = LowIncomeHH_Likelihood 
 
 replace LowIncomeHH_flip = 100 - LowIncomeHH_Likelihood if Wealthy==1
 
-
- 
 * Trust Barriers
 
 replace AOD_Localtrust=100-AOD_Localtrust
@@ -751,23 +709,15 @@ replace AOD_Urbantrust=100-AOD_Urbantrust
 
 swindex  FM_NotappealingComm  FM_Forrich_flip HighIncomeHH_flip LowIncomeHH_flip, generate(Cultural_DemandB) displayw
 
-
-
 swindex  FM_Uncleanproduce AOD_Shopifsafeguarantee AOD_Untestedsafety AOD_Localtrust AOD_Urbantrust, generate(Cultural_SupplyB) displayw
 
-
- 
- 
 * Barriers* Non_White
  gen Econ_DemandB_NW = Econ_DemandB*Non_White
  gen Econ_SupplyB_NW= Econ_SupplyB*Non_White
  
- 
  gen Cultural_DemandB_NW= Cultural_DemandB*Non_White
  gen Cultural_SupplyB_NW= Cultural_SupplyB*Non_White
   
- 
- 
 
 **CONTROLS **************
 
@@ -780,13 +730,9 @@ global ZipCode urban_zip median_hh_income pop_density pct_white population
 
 global Distance  dist_nearest_miles  dist_nearest_snap_miles fm_count_5mile
 
-
 global City city_median_income  city_pct_nonwhite city_pct_white city_pop_density city_population city_poverty_rate
 
-
 global  Cdistance  dist_nearest_city_miles 
-
-
 
 *===============================================================
 encode nearest_city, gen(city_id)
@@ -798,14 +744,11 @@ encode nearest_city, gen(city_id)
 global Treat  Econ_DemandB Econ_DemandB_NW Econ_SupplyB Econ_SupplyB_NW Cultural_DemandB Cultural_DemandB_NW Cultural_SupplyB Cultural_SupplyB_NW 
 
 
-
 *===============================================================
 * FULL SAMPLE
 *===============================================================
 
 reg FM_Attendance $Treat $G_Shopper $Survey_Demographics $ZipCode $Distance $Cdistance Non_White i.city_id, robust	
-
-
 
 estimates store Full
 
