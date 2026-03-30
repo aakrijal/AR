@@ -55,7 +55,6 @@ zip_sf$dist_nearest_miles <- apply(
   function(x) min(x, na.rm = TRUE)
 ) / 1609.344
 
-
 dist_mat_miles <- drop_units(dist_mat) / 1609.344
 
 zip_sf$FM_count_1mile  <- rowSums(dist_mat_miles < 1,  na.rm = TRUE)
@@ -75,7 +74,6 @@ zip_distance1 <- zip_sf %>%
   )
 
 ```
-
 
 ```{r FM COUNT}
 
@@ -115,7 +113,6 @@ zip_sf$dist_nearest_snap_miles <- apply (
   
 )
   
-
 ```
 
 ```{r}
@@ -145,7 +142,6 @@ zip_distance <- zip_sf %>%
     
   )
 ```
-
 
 ```{r FM in a ZIP}
 
