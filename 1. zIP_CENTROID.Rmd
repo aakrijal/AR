@@ -4,7 +4,6 @@ output: html_document
 date: "2026-01-21"
 ---
 
-
 This calculates population-weighted ZIP code centroids for the entire United States using:
 
 - 2020 Decennial Census** tract-level population data
