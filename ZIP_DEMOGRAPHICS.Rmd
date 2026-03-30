@@ -1,0 +1,110 @@
+---
+title: "ZCTA_CONTROLS"
+output: html_document
+date: "2026-02-04"
+---
+
+```{r setup}
+library(tidycensus)
+library(tigris)
+library(dplyr)
+library(sf)
+options(tigris_use_cache = TRUE)
+```
+
+ ZCTA-level ACS demographics (2020)
+ 
+```{r ZCTA}
+zcta_acs <- get_acs(
+  geography = "zcta",
+  year = 2023,
+  survey = "acs5",
+  variables = c(
+    population = "B01003_001",
+    median_hh_income = "B19013_001",
+    white = "B03002_003"
+  ),
+  output = "wide"
+) %>%
+  select(
+    zcta = GEOID,  
+    population = populationE,
+    median_hh_income = median_hh_incomeE,
+    white_pop = whiteE
+  ) %>%
+  mutate(
+    pct_white = (white_pop / population) * 100,
+    pct_nonwhite = (100-pct_white)
+  )
+
+```
+
+
+
+```{r land and water area }
+zcta_sf <- zctas(year = 2023) %>%
+  st_transform(5070)
+
+zcta_areas <- zcta_sf %>%
+  st_drop_geometry() %>%
+  transmute(
+    zcta = GEOID20,
+    land_area_sqkm  = ALAND20  / 1e6,
+    water_area_sqkm = AWATER20 / 1e6,
+    total_area_sqkm = (ALAND20 + AWATER20) / 1e6
+  )
+
+```
+
+```{r rural-urban classsifictaion}
+
+urban_sf <- urban_areas(year = 2023) %>%
+  st_transform(5070)
+
+zcta_urban <- st_intersects(zcta_sf, urban_sf, sparse = FALSE) %>%
+  apply(1, any) %>%
+  tibble(
+    zcta = zcta_sf$GEOID20,
+    urban = .
+  )
+```
+
+```{r zcta_to_county}
+counties_sf <- counties(year = 2023) %>%
+  st_transform(5070)
+
+zcta_county <- st_join(
+  zcta_sf,
+  counties_sf,
+  largest = TRUE
+) %>%
+  st_drop_geometry() %>%
+  transmute(
+    zcta = GEOID20,
+    state_fips = STATEFP,
+    county_fips = GEOID,
+    county_name = NAME
+  )
+
+```
+
+
+```{r}
+zip_controls <- zcta_acs %>%
+  left_join(zcta_areas,  by = "zcta") %>%
+  left_join(zcta_urban,  by = "zcta") %>%
+  left_join(zcta_county, by = "zcta") %>%
+  mutate(
+    pop_density = population / land_area_sqkm,
+    urban = coalesce(urban, FALSE)
+  ) %>%
+  rename(Zip_Code = zcta)
+
+```
+
+
+
+```{r}
+write.csv (zip_controls,"Zip_controls.csv")
+```
+

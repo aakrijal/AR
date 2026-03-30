@@ -1,0 +1,154 @@
+---
+title: "DISTANCE"
+output: html_document
+date: "2026-01-27"
+---
+
+```{r}
+
+setwd("/Users/aakritirijal/Desktop/THESIS_ANALYSIS/FINAL/ANALYSIS/DISTANCE_CALCULATION")
+library(tidycensus)
+library(tigris)
+library(sf)
+library(dplyr)
+library(purrr)
+library(readr)
+library(stringr)
+library(haven)
+library(readxl)
+library(units)
+library(tidyr)
+
+options(tigris_use_cache = TRUE)
+```
+
+
+```{r}
+zip_centers <- st_read ("zip_centroid.shp")
+
+FM_List <- read_csv ("FM_Complete_Details1.csv")
+```
+
+```{r}
+zip_sf <- zip_centers %>%
+  st_as_sf(coords = c("longitude", "latitude"), crs = 4326)
+
+fm_sf <- FM_List %>%
+  st_as_sf(coords = c("original_lon", "original_lat"), crs = 4326)
+```
+
+
+```{r}
+# Project to meters
+zip_sf <- st_transform(zip_sf, 5070)
+fm_sf  <- st_transform(fm_sf, 5070)
+```
+
+```{r}
+# Distance matrix
+dist_mat <- st_distance(zip_sf, fm_sf)
+
+# Nearest market distance (miles)
+zip_sf$dist_nearest_miles <- apply(
+  dist_mat,
+  1,
+  function(x) min(x, na.rm = TRUE)
+) / 1609.344
+
+
+dist_mat_miles <- drop_units(dist_mat) / 1609.344
+
+zip_sf$FM_count_1mile  <- rowSums(dist_mat_miles < 1,  na.rm = TRUE)
+zip_sf$FM_count_5mile  <- rowSums(dist_mat_miles < 5,  na.rm = TRUE)
+zip_sf$FM_count_10mile <- rowSums(dist_mat_miles < 10, na.rm = TRUE)
+zip_sf$FM_count_15mile <- rowSums(dist_mat_miles < 15, na.rm = TRUE)
+zip_sf$FM_count_20mile <- rowSums(dist_mat_miles < 20, na.rm = TRUE)
+
+zip_distance1 <- zip_sf %>%
+  st_drop_geometry() %>%
+  select(
+    zip,
+    dist_nearest_miles,
+    FM_count_1mile,
+    FM_count_5mile,
+    FM_count_10mile
+  )
+
+```
+
+
+```{r FM COUNT}
+
+# Load ZIP boundaries (polygons, not points)
+zip_boundaries <- zctas(year = 2020, cb = FALSE) %>%
+  st_transform(5070) %>%
+  rename(zip = ZCTA5CE20)
+
+# Spatial join: which ZIP boundary does each FM fall in?
+fm_counts <- st_join(fm_sf, zip_boundaries, join = st_within) %>%
+  st_drop_geometry() %>%
+  group_by(zip) %>%
+  summarise(
+    n_fm = n(),
+    n_snap_fm = sum(snap_accepting_fm == "Yes", na.rm = TRUE),
+    .groups = "drop"
+  ) 
+
+```
+
+```{r SNAP DISTANCE}
+
+
+fm_snap_sf <- fm_sf %>%
+  filter(snap_accepting_fm == "Yes")
+
+dist_mat_snap <- st_distance(zip_sf, fm_snap_sf)
+dist_mat_snap_miles <- drop_units(dist_mat_snap) / 1609.344
+
+
+zip_sf$dist_nearest_snap_miles <- apply (
+  dist_mat_snap_miles, 
+  1, 
+  function(x) {
+    if(length(x) == 0 || all(is.na(x))) NA_real_ else min(x, na.rm = TRUE)
+  }
+  
+)
+  
+
+```
+
+```{r}
+zip_distance <- zip_sf %>%
+  st_drop_geometry() %>%
+  mutate(zip = as.character(zip)) %>%
+  left_join(
+    fm_counts %>% mutate(zip = as.character(zip)), 
+    by = "zip"
+  ) %>%
+  mutate(
+    n_fm = replace_na(n_fm, 0),
+    n_snap_fm = replace_na(n_snap_fm, 0)
+  ) %>%
+  select(
+    zip,
+    n_fm,
+    n_snap_fm,
+    dist_nearest_miles,
+    dist_nearest_snap_miles,
+    FM_count_1mile,
+    FM_count_5mile,
+    FM_count_10mile,
+    FM_count_15mile,
+    FM_count_20mile
+    
+    
+  )
+```
+
+
+```{r FM in a ZIP}
+
+write_csv(zip_distance, "zip_distance.csv" )
+```
+

@@ -1,0 +1,109 @@
+---
+title: "CITY_CONTROLS"
+output: pdf_document
+date: "2026-03-05"
+---
+ Load all the pacakges
+```{r setup}
+library(tidycensus)
+library(tigris)
+library(dplyr)
+library(sf)
+options(tigris_use_cache = TRUE)
+```
+
+City-level ACS demographics (2023)
+ 
+```{r City}
+
+city_acs <- get_acs(
+  geography = "place",
+  state = "TN",
+  year = 2023,
+  survey = "acs5",
+  variables = c(
+    population = "B01003_001",
+    median_income = "B19013_001",
+    white = "B03002_003",
+    poverty = "B17001_002",
+    poverty_total = "B17001_001",
+    college_ba = "B15003_022",
+    college_ma = "B15003_023",
+    college_prof = "B15003_024",
+    college_phd = "B15003_025",
+    pop25 = "B15003_001"
+  ),
+  output = "wide"
+)
+
+```
+
+we create variables from the original ones
+
+```{r}
+cities <- city_acs %>%
+  filter(NAME %in% c(
+    "Nashville-Davidson metropolitan government (balance), Tennessee",
+    "Knoxville city, Tennessee",
+    "Memphis city, Tennessee"
+  )) %>%
+  mutate(
+    pct_white = (whiteE / populationE) * 100,
+    pct_nonwhite = 100 - pct_white,
+    poverty_rate = (povertyE / poverty_totalE) * 100,
+    pct_college = ((college_baE + college_maE + college_profE + college_phdE) / pop25E) * 100,
+    city = gsub(", Tennessee", "", NAME)
+  )
+```
+
+we find the city land area
+
+```{r land area }
+cities_sf <- places(state = "TN", year = 2023) %>%
+  filter(NAME %in% c(
+    "Nashville-Davidson metropolitan government (balance)",
+    "Knoxville",
+    "Memphis"
+  )) %>%
+  st_transform(5070)
+
+city_area <- cities_sf %>%
+  st_drop_geometry() %>%
+  transmute(
+    GEOID,
+    city = NAME,
+    land_area_sqkm = ALAND / 1e6
+  )
+```
+
+Then we merge everything
+
+```{r merge}
+
+city_controls <- cities %>%
+  select(
+    GEOID,
+    city,
+    population = populationE,
+    median_income = median_incomeE,
+    pct_white,
+    pct_nonwhite,
+    poverty_rate,
+    pct_college
+  ) %>%
+  left_join(
+    city_area %>% select(GEOID, land_area_sqkm),
+    by = "GEOID"
+  ) %>%
+  mutate(
+    pop_density = population / land_area_sqkm
+  )
+
+```
+
+
+
+```{r}
+write.csv(city_controls, "City_controls_TN.csv", row.names = FALSE)
+```
+
