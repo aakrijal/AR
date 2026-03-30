@@ -1,0 +1,279 @@
+---
+title: "Population_Weighted_ZIP_Centers"
+output: html_document
+date: "2026-01-21"
+---
+
+
+This calculates population-weighted ZIP code centroids for the entire United States using:
+
+- 2020 Decennial Census** tract-level population data
+- HUD Q2 2020 Tract-ZIP Crosswalk (Q2 2020)
+
+## Why Population-Weighted Centroids?
+
+Problem with geometric centroids:
+- Geographic center assumes even population distribution
+- In reality, people cluster in neighborhoods
+- Suburban ZIP might have geometric center in empty field
+
+Solution:
+- Weight each Census tract's location by its population
+- Pull centroid toward where people actually live
+- More accurate for accessibility analysis than blocks or block groups as they can
+be distributed over the state or county boundries. 
+
+```{r load-packages}
+
+setwd("~/Desktop/THESIS_ANALYSIS/Heatmaps/ZIP_CENTERS_TRACT_TO_ZIP")
+# Spatial data and mapping
+library(tidycensus)   # Census data API
+library(tigris)       # Census geographic boundaries
+library(sf)           # Spatial operations
+library(dplyr)        
+library(purrr)        
+library(readxl)       
+library(janitor)
+library(ggplot2)      
+library(scales)      
+options(tigris_use_cache = TRUE)  # Cache geographic downloads
+```
+
+**Crosswalk variables**
+
+zip: USPS ZIP code
+tract: Census tract GEOID (geographic identifiers)
+res_ratio: share of residential addresses in the tract that fall in this ZIP
+
+ZIP codes are padded to 5 digits to prevent merge failures
+Only residential overlaps (`res_ratio > 0`) are retained
+
+
+```{r}
+crosswalk_file <- "TRACT_ZIP_062020.xlsx"
+
+tract_zip_crosswalk <- read_excel(crosswalk_file) %>%
+  clean_names() %>%
+  select(zip, tract, res_ratio) %>%
+  mutate(
+    tract = as.character(tract),
+    zip   = sprintf("%05d", as.numeric(zip))
+  ) %>%
+  filter(res_ratio > 0)
+```
+
+
+Key variables:
+- `res_ratio`: Proportion of tract's residential addresses in this ZIP
+- `bus_ratio`: Proportion of tract's business addresses in this ZIP
+- We use `res_ratio` because we're weighting by residential population
+## Download Census Tract Populations
+
+**Source:** 2020 Decennial Census  
+**Variable:** P1_001N (Total Population)  
+**Geography:** Census Tracts  
+
+```{r census}
+
+rds <- "us_tracts_2020.rds"
+
+if (file.exists(rds)) {
+  tracts <- readRDS(rds)
+} else {
+  tracts <- map_dfr(c(state.abb, "DC"), function(s) {
+    cat(s, "")
+    get_decennial(
+      geography = "tract",
+      variables = "P1_001N",
+      state = s,
+      year = 2020,
+      geometry = TRUE
+    )
+  })
+  saveRDS(tracts, rds)
+}
+
+```
+
+~ Only tracts appearing in the tract–ZIP crosswalk are retained
+~ Zero-population tracts are excluded
+~ Tracts are projected to EPSG:5070 to enable population-weighted spatial
+  averaging in meters
+
+```{r filter}
+
+tracts_proj <- tracts %>%
+  filter(GEOID %in% tract_zip_crosswalk$tract, value > 0) %>% 
+  st_transform(5070)
+
+```
+
+
+**Tract Representative Points (Point-on-Surface)**
+
+- Converts each census tract polygon into a single representative point inside
+  the tract
+- Uses point-on-surface to ensure the point lies within tract boundaries
+- Extracts x and y coordinates (in meters) from each representative point
+- Attaches tract population to each point
+
+
+```{r}
+tract_points <- tracts_proj %>%
+  mutate(
+    point = st_point_on_surface(geometry),
+    coords = st_coordinates(point),
+    x = coords[,1],
+    y = coords[,2]
+  ) %>%
+  st_drop_geometry() %>%
+  select(
+    tract = GEOID,
+    x,
+    y,
+    pop = value
+  )
+
+```
+
+**Population-Weighted ZIP Centroids**
+
+- Merges the tract–ZIP crosswalk with tract representative points and populations
+- Drops observations with missing coordinates or zero population
+- Groups tracts by ZIP code
+- Computes population weights for each tract within a ZIP (pop × res_ratio) and              renormalizes them to sum to one
+- Calculates ZIP-level centroid coordinates as weighted averages of tract coordinates
+- Computes ZIP-level population and the number of contributing tracts
+- Converts results to a spatial point object (EPSG:5070) and then re-projects to             latitude/longitude (EPSG:4326)
+- Extracts longitude and latitude 
+
+```{r Population-Weighted ZIP Centroids}
+
+zip_cents <- tract_zip_crosswalk %>%
+  left_join(tract_points, by = "tract") %>%       # attach tract coordinates and population
+  filter(!is.na(x), pop > 0) %>%                   # keep valid, populated tracts only
+  group_by(zip) %>%                                # operate within each ZIP code
+  mutate(
+    pop_weighted_value = pop * res_ratio,           # population assigned to ZIP
+    weight = pop_weighted_value / sum(pop_weighted_value)  # normalize weights (sum to 1)
+  ) %>%
+  summarize(
+    x = sum(x * weight),                            # population-weighted X coordinate
+    y = sum(y * weight),                            # population-weighted Y coordinate
+    population = sum(pop * res_ratio),              # total ZIP population
+    n_tracts = n(),                                 # number of contributing tracts
+    .groups = "drop"
+  ) %>%
+  st_as_sf(coords = c("x", "y"), crs = 5070) %>%    # convert to spatial points (meters)
+  st_transform(4326) %>%                            # re-project to lat/long
+  mutate(
+    longitude = st_coordinates(.)[,1],              # extract longitude
+    latitude  = st_coordinates(.)[,2]               # extract latitude
+  )                
+
+
+```
+
+
+We download the ZCTA file
+```{r ZCTA}
+
+zcta_boundaries <- zctas(year = 2020, cb = FALSE) %>%
+  st_transform(5070)  # Project to meters for accurate area calculation
+
+```
+
+
+```{r ZCTA Area}
+zip_geometry <- zcta_boundaries %>%
+  mutate(
+    area_sq_m = st_area(geometry),                    # Area in square meters
+    area_sq_km = as.numeric(area_sq_m) / 1e6,        # Convert to square kilometers
+    area_sq_mi = as.numeric(area_sq_m) / 2.589988e6  # Convert to square miles
+  ) %>%
+  select(
+    zip = ZCTA5CE20,  # ZIP code identifier (adjust column name if different)
+    area_sq_km,
+    area_sq_mi
+  ) %>%
+  st_drop_geometry()  # Remove geometry, keep just metrics
+```
+
+
+The st_bbox() functionis used to return the bounding box of a simple feature or a set of simple features. It computes the minimum and maximum coordinates (xmin, ymin, xmax, ymax) that enclose all the geometries within the object. 
+
+```{r ZIP length}
+zip_length <- zcta_boundaries %>%
+  st_transform(5070) %>%  # Ensure projected CRS for accurate distances
+  mutate(
+    length_km = map_dbl(geometry, function(g) {
+      bbox <- st_bbox(g)
+      width <- bbox["xmax"] - bbox["xmin"]
+      height <- bbox["ymax"] - bbox["ymin"]
+      diagonal <- sqrt(width^2 + height^2)
+      diagonal / 1000  # Convert meters to km
+    }),
+    length_mi = length_km * 0.621371
+  ) %>%
+  select(
+    zip = ZCTA5CE20,
+    length_km,
+    length_mi
+  ) %>%
+  st_drop_geometry()
+```
+
+
+```{r merge}
+
+zip_cents_complete <- zip_cents %>%
+  left_join(zip_geometry, by = "zip") %>%
+  left_join(zip_length, by = "zip") %>%
+  select(
+    zip,
+    longitude,
+    latitude,
+    population,
+    n_tracts,
+    area_sq_km,
+    area_sq_mi,
+    length_km,
+    length_mi,
+  ) 
+```
+
+
+```{r csv}
+write.csv(zip_cents_complete,"Pop_Centroid.csv")
+
+```
+
+
+```{r}
+zip_cents_complete1 <- zip_cents %>%
+  left_join(zip_geometry, by = "zip") %>%
+  left_join(zip_length, by = "zip") %>%
+  select(
+    zip,
+    longitude,
+    latitude,
+    population,
+    n_tracts,
+    area_sq_km,
+    area_sq_mi,
+    length_km,
+    length_mi,
+  ) 
+```
+
+
+```{r shapefile}
+st_write(
+  zip_cents_complete1,
+  "zip_centroid.shp",
+  delete_dsn = TRUE
+)
+
+```
+
+
